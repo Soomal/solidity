@@ -9,8 +9,8 @@ version: 2.1
 parameters:
   ubuntu-2004-docker-image:
     type: string
-    # solbuildpackpusher/solidity-buildpack-deps:ubuntu2004-6
-    default: "solbuildpackpusher/solidity-buildpack-deps@sha256:da44d7f78e093f7f0415abf07f7c1fd1c2ed4fa65fefea428821a05186c42ec9"
+    # solbuildpackpusher/solidity-buildpack-deps:ubuntu2004-7
+    default: "solbuildpackpusher/solidity-buildpack-deps@sha256:745495fecc29a087bcd361b632b90501e6e4226049284b874360308e84c8eb0f"
   ubuntu-2004-clang-docker-image:
     type: string
     # solbuildpackpusher/solidity-buildpack-deps:ubuntu2004.clang-6
