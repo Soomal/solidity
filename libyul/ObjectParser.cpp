@@ -27,6 +27,10 @@
 
 #include <liblangutil/Token.h>
 
+#include <libsolutil/StringUtils.h>
+
+#include <regex>
+
 using namespace std;
 using namespace solidity;
 using namespace solidity::yul;
@@ -104,10 +108,92 @@ shared_ptr<Block> ObjectParser::parseCode()
 	return parseBlock();
 }
 
+optional<ObjectParser::ReverseSourceNameMap> ObjectParser::tryGetSourceLocationMapping() const
+{
+	return tryGetSourceLocationMapping(m_scanner->currentCommentLiteral());
+}
+
+optional<ObjectParser::ReverseSourceNameMap> ObjectParser::tryGetSourceLocationMapping(std::string const& _text)
+{
+	// @use-src 0:"abc.sol" , "1:foo.sol" ,2:"bar.sol"
+	//
+	// UseSrcList := UseSrc (',' UseSrc)*
+	// UseSrc     := [0-9]+ ':' FileName
+	// FileName   := "(([^\"]|\.)*)"
+
+	// Matches some "@use-src TEXT".
+	static std::regex const lineRE = std::regex(
+		R"~~~((^|\s+)@use-src\s+(.*)$)~~~",
+		std::regex_constants::ECMAScript | std::regex_constants::optimize
+	);
+	string_view text(_text);
+	std::cmatch cm;
+	if (!std::regex_search(text.data(), text.data() + text.size(), cm, lineRE))
+		return nullopt;
+	solAssert(cm.size() == 3, "");
+
+	// Let @c text point to the parameter value (last match).
+	text = string_view(cm[2].first, static_cast<size_t>(std::distance(cm[2].first, cm[2].second)));
+
+	// iteratively match for NUM : STRING_LITERAL and increment
+	static regex const firstParamRE(R"~~~(\s*(\d+)\s*:\s*"((?:\\\"|[^\"])*)")~~~",
+		std::regex_constants::ECMAScript | std::regex_constants::optimize
+	);
+	static regex const continuationParamRE(R"~~~(\s*,\s*(\d+)\s*:\s*"((?:\\\"|[^\"])*)")~~~",
+		std::regex_constants::ECMAScript | std::regex_constants::optimize
+	);
+
+	ReverseSourceNameMap result;
+
+	int k = 0;
+	while (!text.empty())
+	{
+		if (!std::regex_search(text.data(), text.data() + _text.size(), cm, k ? continuationParamRE : firstParamRE))
+			return nullopt;
+		++k;
+		solAssert(cm.size() == 3, "");
+
+		auto const len = cm[0].length();
+		solAssert(len > 0, "");
+		text.remove_prefix(static_cast<size_t>(len));
+		solAssert(k <= 16, ""); // A sanity-check to avoid abuse. Should never happen.
+
+		auto const sourceIndex = toUnsignedInt(cm[1].str());
+		if (!sourceIndex)
+		{
+			// TODO: report error
+			return nullopt;
+		}
+
+		auto fileName = cm[2].str();
+		result[*sourceIndex] = fileName;
+	}
+
+	return result;
+}
+
+optional<ObjectParser::CharStreamMap>
+ObjectParser::convertToCharStreamMap(ReverseSourceNameMap const& _reverseSourceNames) const
+{
+	(void) _reverseSourceNames; // TODO map file names to their CharStream (needs CompilerStack for that)
+	return nullopt;
+}
+
 shared_ptr<Block> ObjectParser::parseBlock()
 {
-	Parser parser(m_errorReporter, m_dialect);
-	shared_ptr<Block> block = parser.parse(m_scanner, true);
+	// Parser parser(m_errorReporter, m_dialect);
+	// shared_ptr<Block> block = parser.parse(m_scanner, true);
+	// TODO: maybe here check for @use-src?
+	unique_ptr<Parser> parser;
+	if (auto sourceLocationMap = tryGetSourceLocationMapping())
+	{
+		auto charStreamMap = convertToCharStreamMap(*sourceLocationMap);
+		yulAssert(charStreamMap, "");
+		parser = make_unique<Parser>(m_errorReporter, m_dialect, *charStreamMap);
+	}
+	else
+		parser = make_unique<Parser>(m_errorReporter, m_dialect);
+	shared_ptr<Block> block = parser->parse(m_scanner, true);
 	yulAssert(block || m_errorReporter.hasErrors(), "Invalid block but no error!");
 	return block;
 }

@@ -55,6 +55,12 @@ public:
 	/// @returns an empty shared pointer on error.
 	std::shared_ptr<Object> parse(std::shared_ptr<langutil::Scanner> const& _scanner, bool _reuseScanner);
 
+	using ReverseSourceNameMap = std::map<unsigned, std::string>;
+	using CharStreamMap = std::map<unsigned, std::shared_ptr<langutil::CharStream>>;
+	static std::optional<ReverseSourceNameMap> tryGetSourceLocationMapping(std::string const& _text);
+	std::optional<ReverseSourceNameMap> tryGetSourceLocationMapping() const;
+	std::optional<CharStreamMap> convertToCharStreamMap(ReverseSourceNameMap const& _reverseSourceNames) const;
+
 private:
 	std::shared_ptr<Object> parseObject(Object* _containingObject = nullptr);
 	std::shared_ptr<Block> parseCode();

@@ -162,6 +162,54 @@ BOOST_AUTO_TEST_CASE(to_string)
 	BOOST_CHECK_EQUAL(asmStack.print(), expectation);
 }
 
+BOOST_AUTO_TEST_CASE(use_src_empty)
+{
+	auto const mapping = ObjectParser::tryGetSourceLocationMapping("");
+	BOOST_REQUIRE(!mapping);
+}
+
+BOOST_AUTO_TEST_CASE(use_src_simple)
+{
+	auto const mapping = ObjectParser::tryGetSourceLocationMapping(R"(@use-src 0:"contract.sol")");
+	BOOST_REQUIRE(mapping);
+	BOOST_REQUIRE_EQUAL(mapping->size(), 1);
+	BOOST_REQUIRE_EQUAL(mapping->at(0), "contract.sol");
+}
+
+BOOST_AUTO_TEST_CASE(use_src_multiple)
+{
+	auto const mapping = ObjectParser::tryGetSourceLocationMapping(
+		R"(@use-src 0:"contract.sol", 1:"misc.yul")"
+	);
+	BOOST_REQUIRE(mapping);
+	BOOST_REQUIRE_EQUAL(mapping->size(), 2);
+	BOOST_REQUIRE_EQUAL(mapping->at(0), "contract.sol");
+	BOOST_REQUIRE_EQUAL(mapping->at(1), "misc.yul");
+}
+
+BOOST_AUTO_TEST_CASE(use_src_escaped_filenames)
+{
+	auto const mapping = ObjectParser::tryGetSourceLocationMapping(
+		R"(@use-src 42:"con\"tract@\".sol")"
+	);
+	BOOST_REQUIRE(mapping);
+	BOOST_REQUIRE_EQUAL(mapping->size(), 1);
+	BOOST_REQUIRE(mapping->count(42));
+	BOOST_REQUIRE_EQUAL(mapping->at(42), "con\\\"tract@\\\".sol");
+}
+
+// TODO: test invalid syntax
+BOOST_AUTO_TEST_CASE(use_src_invalid_syntax_open_quote)
+{
+	// open quote arg
+	auto const mapping = ObjectParser::tryGetSourceLocationMapping(
+		R"(@use-src 42:"con)"
+	);
+	// invalid source index: R"(@use-src -1:"foo.sol")"
+	// no colon:             R"(@use-src -1_"foo.sol")"
+	//
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 }
