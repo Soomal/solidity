@@ -16,40 +16,40 @@
 */
 // SPDX-License-Identifier: GPL-3.0
 /**
- * Translates Yul code from EVM dialect to Ewasm dialect.
+ * Interface to retrieve the scanner by a source name.
  */
 
 #pragma once
 
-#include <libyul/ASTForward.h>
-#include <libyul/optimiser/ASTWalker.h>
-#include <libyul/Dialect.h>
+#include <string>
 
 namespace solidity::langutil
 {
-class ScannerBySourceName;
-}
-namespace solidity::yul
-{
-struct Object;
 
-class EVMToEwasmTranslator: public ASTModifier
+class Scanner;
+
+/**
+ * Interface to retrieve a scanner from a source name.
+ * Used especially for printing error information.
+ */
+class ScannerBySourceName
 {
 public:
-	EVMToEwasmTranslator(Dialect const& _evmDialect, langutil::ScannerBySourceName const& _scanner):
-		m_dialect(_evmDialect),
-		m_scanner(_scanner)
-	{}
-	Object run(Object const& _object);
+	virtual ~ScannerBySourceName() = default;
+	virtual langutil::Scanner const& scanner(std::string const& _sourceName) const = 0;
+};
 
+class ScannerBySourceNameForSingleScanner: public ScannerBySourceName
+{
+public:
+	ScannerBySourceNameForSingleScanner(Scanner const& _scanner):
+		m_scanner(_scanner) {}
+	langutil::Scanner const& scanner(std::string const&) const override
+	{
+		return m_scanner;
+	}
 private:
-	void parsePolyfill();
-
-	Dialect const& m_dialect;
-	langutil::ScannerBySourceName const& m_scanner;
-
-	std::shared_ptr<Block> m_polyfill;
-	std::set<YulString> m_polyfillFunctions;
+	Scanner const& m_scanner;
 };
 
 }
