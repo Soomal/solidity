@@ -78,7 +78,10 @@ private:
 	/// attempts to reorganize the layout to avoid those cases.
 	void fixStackTooDeep(CFG::BasicBlock const& _entry);
 
+	static Stack compressStack(Stack _stack);
+
 	StackLayout& m_layout;
+	std::vector<VariableSlot> m_currentFunctionReturnVariables;
 };
 
 }

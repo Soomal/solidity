@@ -25,15 +25,16 @@
 
 #include <libsolutil/Algorithms.h>
 #include <libsolutil/cxx20.h>
-#include <libsolutil/Permutations.h>
 #include <libsolutil/Visitor.h>
 
 #include <range/v3/algorithm/any_of.hpp>
 #include <range/v3/range/conversion.hpp>
 #include <range/v3/view/all.hpp>
+#include <range/v3/view/concat.hpp>
 #include <range/v3/view/drop.hpp>
 #include <range/v3/view/drop_last.hpp>
 #include <range/v3/view/filter.hpp>
+#include <range/v3/view/iota.hpp>
 #include <range/v3/view/map.hpp>
 #include <range/v3/view/reverse.hpp>
 #include <range/v3/view/take.hpp>
@@ -51,53 +52,94 @@ namespace
 {
 struct PreviousSlot { size_t slot; };
 
-// TODO: Rewrite this as custom algorithm matching createStackLayout exactly and make it work
-// for all cases, including duplicates and removals of slots that can be generated on the fly, etc.
-// After that the util::permute* functions can be removed.
-Stack createIdealLayout(Stack const& _post, vector<variant<PreviousSlot, set<unsigned>>> layout)
+template<typename Callable>
+Stack createIdealLayout(Stack const& _post, vector<variant<PreviousSlot, StackSlot>> _layout, Callable _generateSlotOnTheFly)
 {
-	util::permuteDup(static_cast<unsigned>(layout.size()), [&](unsigned _i) -> set<unsigned> {
-		// For call return values the target position is known.
-		if (set<unsigned>* pos = get_if<set<unsigned>>(&layout.at(_i)))
-			return *pos;
-		// Previous arguments can stay where they are.
-		return {_i};
-	}, [&](unsigned _i) {
-		std::swap(layout.back(), layout.at(layout.size() - _i - 1));
-	}, [&](unsigned _i) {
-		auto positions = get_if<set<unsigned>>(&layout.at(layout.size() - _i));
-		yulAssert(positions, "");
-		if (positions->count(static_cast<unsigned>(layout.size())))
+	if (_layout.empty())
+		return Stack{};
+
+	struct ShuffleOperations
+	{
+		vector<variant<PreviousSlot, StackSlot>>& layout;
+		Stack const& post;
+		std::set<StackSlot> outputs;
+		std::map<StackSlot, int> multiplicity;
+		Callable generateSlotOnTheFly;
+		ShuffleOperations(
+			vector<variant<PreviousSlot, StackSlot>>& _layout,
+			Stack const& _post,
+			Callable _generateSlotOnTheFly
+		): layout(_layout), post(_post), generateSlotOnTheFly(_generateSlotOnTheFly)
 		{
-			positions->erase(static_cast<unsigned>(layout.size()));
-			layout.emplace_back(set<unsigned>{static_cast<unsigned>(layout.size())});
+			for (auto const& layoutSlot: layout)
+				if (StackSlot const* slot = get_if<StackSlot>(&layoutSlot))
+					outputs.insert(*slot);
+
+			for (auto const& layoutSlot: layout)
+				if (StackSlot const* slot = get_if<StackSlot>(&layoutSlot))
+					--multiplicity[*slot];
+			for (auto&& slot: post)
+				if (outputs.count(slot) || generateSlotOnTheFly(slot))
+					++multiplicity[slot];
 		}
-		else
+		bool isCompatible(size_t _source, size_t _target)
 		{
-			optional<unsigned> duppingOffset;
-			for (unsigned pos: *positions)
-			{
-				if (pos != layout.size() - _i)
-				{
-					duppingOffset = pos;
-					break;
-				}
-			}
-			yulAssert(duppingOffset, "");
-			positions->erase(*duppingOffset);
-			layout.emplace_back(set<unsigned>{*duppingOffset});
+			return
+				_source < layout.size() &&
+				_target < post.size() &&
+				(
+					std::holds_alternative<JunkSlot>(post.at(_target)) ||
+					std::visit(util::GenericVisitor{
+						[&](PreviousSlot const&) {
+							return !outputs.count(post.at(_target)) && !generateSlotOnTheFly(post.at(_target));
+						},
+						[&](StackSlot const& _s) { return _s == post.at(_target); }
+					}, layout.at(_source))
+				);
 		}
-	}, [&]() {
-		yulAssert(false, "");
-	}, [&]() {
-		layout.pop_back();
-	});
+		bool sourceIsSame(size_t _lhs, size_t _rhs)
+		{
+			return std::visit(util::GenericVisitor{
+				[&](PreviousSlot const&, PreviousSlot const&) { return true; },
+				[&](StackSlot const& _lhs, StackSlot const& _rhs) { return _lhs == _rhs; },
+				[&](auto const&, auto const&) { return false; }
+			}, layout.at(_lhs), layout.at(_rhs));
+		}
+		int sourceMultiplicity(size_t _offset)
+		{
+			return std::visit(util::GenericVisitor{
+				[&](PreviousSlot const&) { return 0; },
+				[&](StackSlot const& _s) { return multiplicity.at(_s); }
+			}, layout.at(_offset));
+		}
+		int targetMultiplicity(size_t _offset)
+		{
+			if (!outputs.count(post.at(_offset)) && !generateSlotOnTheFly(post.at(_offset)))
+				return 0;
+			return multiplicity.at(post.at(_offset));
+		}
+		bool targetIsArbitrary(size_t _offset)
+		{
+			return _offset < post.size() && std::holds_alternative<JunkSlot>(post.at(_offset));
+		}
+		void swap(size_t _i)
+		{
+			yulAssert(!holds_alternative<PreviousSlot>(layout.at(layout.size() - _i - 1)) || !holds_alternative<PreviousSlot>(layout.back()), "");
+			std::swap(layout.at(layout.size() -  _i - 1), layout.back());
+		}
+		size_t sourceSize() { return layout.size(); }
+		size_t targetSize() { return post.size(); }
+		void pop() { layout.pop_back(); }
+		void pushOrDupTarget(size_t _offset) { layout.push_back(post.at(_offset)); }
+	};
+
+	Shuffler<ShuffleOperations>::shuffle(_layout, _post, _generateSlotOnTheFly);
 
 	// Now we can construct the ideal layout before the operation.
 	// "layout" has the declared variables in the desired position and
 	// for any PreviousSlot{x}, x yields the ideal place of the slot before the declaration.
 	vector<optional<StackSlot>> idealLayout(_post.size(), nullopt);
-	for (auto const& [slot, idealPosition]: ranges::zip_view(_post, layout))
+	for (auto const& [slot, idealPosition]: ranges::zip_view(_post, _layout))
 		if (PreviousSlot* previousSlot = std::get_if<PreviousSlot>(&idealPosition))
 			idealLayout.at(previousSlot->slot) = slot;
 
@@ -115,28 +157,30 @@ Stack StackLayoutGenerator::propagateStackThroughOperation(Stack _exitStack, CFG
 {
 	Stack& stack = _exitStack;
 
-	vector<set<unsigned>> targetPositions(_operation.output.size(), set<unsigned>{});
-	size_t numToKeep = 0;
-	for (size_t idx: ranges::views::iota(0u, targetPositions.size()))
-		for (unsigned offset: findAllOffsets(stack, _operation.output.at(idx)))
-		{
-			targetPositions[idx].emplace(offset);
-			++numToKeep;
-		}
+	// This is a huge tradeoff between code size, gas cost and stack size.
+	auto generateSlotOnTheFly = [&](StackSlot const&) {
+		//return stack.size() > 12 && canBeFreelyGenerated(_slot);
+		// return canBeFreelyGenerated(_slot);
+		return false;
+	};
 
-	auto layout = ranges::views::iota(0u, stack.size() - numToKeep) |
+	size_t previousLayoutSize = stack.size();
+	for (auto const& slot: stack)
+		if (util::findOffset(_operation.output, slot) || generateSlotOnTheFly(slot))
+				--previousLayoutSize;
+
+	auto layout = ranges::views::iota(0u, previousLayoutSize) |
 		ranges::views::transform([](size_t _index) { return PreviousSlot{_index}; }) |
-		ranges::to<vector<variant<PreviousSlot, set<unsigned>>>>;
-	// The call produces values with known target positions.
-	layout += targetPositions;
+		ranges::to<vector<variant<PreviousSlot, StackSlot>>>;
+	// The call produces a known sequence of values.
+	layout += _operation.output;
 
-	stack = createIdealLayout(stack, layout);
+	stack = createIdealLayout(stack, layout, generateSlotOnTheFly);
 
 	if (auto const* assignment = get_if<CFG::Assignment>(&_operation.operation))
 		for (auto& stackSlot: stack)
 			if (auto const* varSlot = get_if<VariableSlot>(&stackSlot))
-				if (util::findOffset(assignment->variables, *varSlot))
-					stackSlot = JunkSlot{};
+				yulAssert(!util::findOffset(assignment->variables, *varSlot), "");
 
 	for (StackSlot const& input: _operation.input)
 		stack.emplace_back(input);
@@ -149,20 +193,49 @@ Stack StackLayoutGenerator::propagateStackThroughOperation(Stack _exitStack, CFG
 	// Consider removing them properly while accounting for the induced backwards stack shuffling.
 
 	// Remove anything from the stack top that can be freely generated or dupped from deeper on the stack.
-	while (!stack.empty() && (
-		canBeFreelyGenerated(stack.back()) ||
-		util::findOffset(stack | ranges::views::drop_last(1), stack.back())
-	))
-		stack.pop_back();
+	while (!stack.empty())
+	{
+		if (canBeFreelyGenerated(stack.back()))
+			stack.pop_back();
+		else if (auto offset = util::findOffset(stack | ranges::views::reverse | ranges::views::drop(1), stack.back()))
+		{
+			if (*offset + 2 < 16)
+				stack.pop_back();
+			else
+				break;
+		}
+		else
+			break;
+	}
 
-	// TODO: suboptimal. Should account for induced stack shuffling.
-	// TODO: consider if we want this kind of compression at all, resp. whether stack.size() > 12 is a good condition.
-	if (stack.size() > 12)
-		stack = stack | ranges::views::enumerate | ranges::views::filter(util::mapTuple([&](size_t _index, StackSlot const& _slot) {
-			// Filter out slots that can be freely generated or are already present on the stack.
-			return !canBeFreelyGenerated(_slot) && !util::findOffset(stack | ranges::views::take(_index), _slot);
-		})) | ranges::views::values | ranges::to<Stack>;
+	// Deduplicate.
+	stack = compressStack(move(stack));
 	return stack;
+}
+
+Stack StackLayoutGenerator::compressStack(Stack _stack)
+{
+	// TODO: there may be a better criterion than overall stack size.
+	if (_stack.size() <= 12)
+		return _stack;
+
+	optional<size_t> firstDupOffset;
+	do
+	{
+		if (firstDupOffset)
+		{
+			if (_stack.size() - *firstDupOffset - 1 > 1)
+				std::swap(_stack.at(*firstDupOffset + 1), _stack.back());
+			std::swap(_stack.at(*firstDupOffset), _stack.back());
+			_stack.pop_back();
+			firstDupOffset.reset();
+		}
+		for (auto&& [offset, slot]: _stack | ranges::views::enumerate)
+			if (canBeFreelyGenerated(slot) || util::findOffset(_stack | ranges::views::take(offset), slot))
+				firstDupOffset = offset;
+	}
+	while (firstDupOffset);
+	return _stack;
 }
 
 Stack StackLayoutGenerator::propagateStackThroughBlock(Stack _exitStack, CFG::BasicBlock const& _block)
@@ -354,23 +427,17 @@ Stack StackLayoutGenerator::combineStack(Stack const& _stack1, Stack const& _sta
 		size_t numOps = 0;
 		Stack testStack = _candidate;
 		auto swap = [&](unsigned _swapDepth) { ++numOps; if (_swapDepth > 16) numOps += 1000; };
-		auto dup = [&](unsigned _dupDepth) { ++numOps; if (_dupDepth > 16) numOps += 1000; };
-		auto push = [&](StackSlot const& _slot) {
-			if (!canBeFreelyGenerated(_slot))
-			{
-				auto offsetInPrefix = util::findOffset(commonPrefix, _slot);
-				yulAssert(offsetInPrefix, "");
-				// Effectively this is a dup.
-				++numOps;
-				// TODO: Verify that this is correct. The idea is to penalize dupping stuff up that's too deep in
-				//       the prefix at this point.
-				if (commonPrefix.size() + testStack.size() - *offsetInPrefix > 16)
-					numOps += 1000;
-			}
+		auto dupOrPush = [&](StackSlot const& _slot)
+		{
+			if (canBeFreelyGenerated(_slot))
+				return;
+			auto depth = util::findOffset(ranges::concat_view(commonPrefix, testStack) | ranges::views::reverse, _slot);
+			if (depth && *depth >= 16)
+				numOps += 1000;
 		};
-		createStackLayout(testStack, stack1Tail, swap, dup, push, [&](){} );
+		createStackLayout(testStack, stack1Tail, swap, dupOrPush, [&](){} );
 		testStack = _candidate;
-		createStackLayout(testStack, stack2Tail, swap, dup, push, [&](){});
+		createStackLayout(testStack, stack2Tail, swap, dupOrPush, [&](){});
 		return numOps;
 	};
 
@@ -459,7 +526,10 @@ StackLayout StackLayoutGenerator::run(CFG const& _dfg)
 
 	stackLayoutGenerator.processEntryPoint(*_dfg.entry);
 	for (auto& functionInfo: _dfg.functionInfo | ranges::views::values)
+	{
+		stackLayoutGenerator.m_currentFunctionReturnVariables = functionInfo.returnVariables;
 		stackLayoutGenerator.processEntryPoint(*functionInfo.entry);
+	}
 
 	return stackLayout;
 }

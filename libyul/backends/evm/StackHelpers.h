@@ -23,8 +23,11 @@
 
 #include <libsolutil/Visitor.h>
 
+#include <range/v3/algorithm/all_of.hpp>
 #include <range/v3/view/enumerate.hpp>
+#include <range/v3/view/iota.hpp>
 #include <range/v3/view/reverse.hpp>
+#include <range/v3/view/take.hpp>
 
 namespace solidity::yul
 {
@@ -49,140 +52,226 @@ inline std::string stackToString(Stack const& _stack)
 	result += ']';
 	return result;
 }
-template<typename Range, typename Value>
-std::set<unsigned> findAllOffsets(Range&& _range, Value&& _value)
+
+template<typename ShuffleOperations>
+class Shuffler
 {
-	std::set<unsigned> result;
-	auto begin = std::begin(_range);
-	auto end = std::end(_range);
-	auto it = begin;
-	while (it != end)
+public:
+	template<typename... Args>
+	static void shuffle(Args&&... args)
 	{
-		it = std::find(it, end, std::forward<Value>(_value));
-		if (it == end)
-			return result;
-		result.emplace(static_cast<unsigned>(std::distance(begin, it)));
-		++it;
+		bool needsMoreShuffling = true;
+		size_t iterationCount = 0;
+		while (iterationCount < 1000 && (needsMoreShuffling = shuffleStep(std::forward<Args>(args)...)))
+			++iterationCount;
+		yulAssert(!needsMoreShuffling, "Could not create stack layout after 1000 iterations.");
 	}
-	return result;
-}
-
-template<typename Swap, typename Dup, typename Pop, typename PushSlot>
-void createStackLayout(Stack& _currentStack, Stack const& _targetStack, Swap _swap, Dup _dup, PushSlot _push, Pop _pop)
-{
-	if (_currentStack == _targetStack)
-		return;
-
-	if (_currentStack.empty())
+private:
+	template<typename... Args>
+	static bool shuffleStep(Args&&... args)
 	{
-		while (_currentStack.size() < _targetStack.size())
-		{
-			StackSlot newSlot = _targetStack.at(_currentStack.size());
-			_push(newSlot);
-			_currentStack.emplace_back(newSlot);
-		}
-		yulAssert(_currentStack == _targetStack, "");
-		return;
-	}
+		ShuffleOperations ops{std::forward<Args>(args)...};
 
-	auto topTargets = findAllOffsets(_targetStack, _currentStack.back());
-	if (topTargets.size() < findAllOffsets(_currentStack, _currentStack.back()).size())
-	{
-		_pop();
-		_currentStack.pop_back();
-		createStackLayout(_currentStack, _targetStack, _swap, _dup, _push, _pop);
-		return;
-	}
-	else if (_targetStack.size() >= _currentStack.size() && _targetStack.at(_currentStack.size() - 1) == _currentStack.back())
-	{
-		// Current top is in place.
-		// Dup deepest one to be dupped (TODO: choose optimal).
-		for (auto&& [offset, slot]: _currentStack | ranges::views::enumerate)
-		{
-			if (findAllOffsets(_currentStack, slot).size() < findAllOffsets(_targetStack, slot).size())
-			{
-				auto leastDeepOccurrence = util::findOffset(_currentStack | ranges::views::reverse, slot);
-				yulAssert(leastDeepOccurrence, "");
-				_dup(static_cast<unsigned>(*leastDeepOccurrence + 1));
+		if (ranges::all_of(
+			ranges::views::iota(0u, ops.sourceSize()),
+			[&](size_t _index) { return ops.isCompatible(_index, _index); }
+		))
+			return false;
 
-				_currentStack.emplace_back(_currentStack.at(offset));
-				createStackLayout(_currentStack, _targetStack, _swap, _dup, _push, _pop);
-				return;
-			}
-		}
-		// Nothing to dup. Find anything to be pushed and push it.
-		for (auto const& slot: _targetStack)
+		size_t sourceTop = ops.sourceSize() - 1;
+		// If we no longer need the current stack top, we pop it, unless we need an arbitrary slot at this position
+		// in the target.
+		if (
+			ops.sourceMultiplicity(sourceTop) < 0 &&
+			!(ops.targetSize() >= ops.sourceSize() && ops.targetIsArbitrary(sourceTop))
+		)
 		{
-			if (!util::findOffset(_currentStack, slot))
-			{
-				_push(slot);
-				_currentStack.emplace_back(slot);
-				createStackLayout(_currentStack, _targetStack, _swap, _dup, _push, _pop);
-				return;
-			}
-		}
-		// Nothing to push or dup.
-		// Swap the deepest one that's not in place up.
-		for (auto&& [offset, slot]: _currentStack | ranges::views::enumerate)
-		{
-			if (!(slot == _targetStack.at(offset)) && !(slot == _currentStack.back()))
-			{
-				_swap(static_cast<unsigned>(_currentStack.size() - offset - 1));
-				std::swap(_currentStack.back(), _currentStack.at(offset));
-				createStackLayout(_currentStack, _targetStack, _swap, _dup, _push, _pop);
-				return;
-			}
-		}
-		// Nothing to push or dup and nothing out of place => done.
-		yulAssert(_currentStack == _targetStack, "");
-		return;
-	}
-	else
-	{
-		for (unsigned deepestTopTarget: topTargets)
-		{
-			if (deepestTopTarget >= _currentStack.size())
-				break;
-			if (!(_currentStack.at(deepestTopTarget) == _targetStack.at(deepestTopTarget)))
-			{
-				// Move top into place.
-				_swap(static_cast<unsigned>(_currentStack.size() - deepestTopTarget - 1));
-				std::swap(_currentStack.back(), _currentStack.at(deepestTopTarget));
-				createStackLayout(_currentStack, _targetStack, _swap, _dup, _push, _pop);
-				return;
-			}
+			ops.pop();
+			return true;
 		}
 
-		// There needs to be something to dup or push. Try dupping. (TODO: suboptimal)
-		for (auto&& [offset, slot]: _currentStack | ranges::views::enumerate)
-		{
-			if (findAllOffsets(_currentStack, slot).size() < findAllOffsets(_targetStack, slot).size())
-			{
-				auto leastDeepOccurrence = util::findOffset(_currentStack | ranges::views::reverse, slot);
-				yulAssert(leastDeepOccurrence, "");
-				_dup(static_cast<unsigned>(*leastDeepOccurrence + 1));
-				// _dup(static_cast<unsigned>(_currentStack.size() - offset));
+		yulAssert(ops.targetSize() > 0, "");
 
-				_currentStack.emplace_back(_currentStack.at(offset));
-				createStackLayout(_currentStack, _targetStack, _swap, _dup, _push, _pop);
-				return;
-			}
-		}
-		// Nothing to dup. Find anything to be pushed and push it.
-		for (auto const& slot: _targetStack)
-		{
-			if (!util::findOffset(_currentStack, slot))
+		// If the top is not supposed to be exactly what is on top right now, try to find a lower position to swap it to.
+		if (!ops.isCompatible(sourceTop, sourceTop) || ops.targetIsArbitrary(sourceTop))
+			for (size_t offset: ranges::views::iota(0u, std::min(ops.sourceSize(), ops.targetSize())))
+				// It makes sense to swap to a lower position, if
+				if (
+					!ops.isCompatible(offset, offset) && // The lower slot is not already in position.
+					!ops.sourceIsSame(offset, sourceTop) && // We would not just swap identical slots.
+					ops.isCompatible(sourceTop, offset) // The lower position wants to have this slot.
+				)
+				{
+					ops.swap(ops.sourceSize() - offset - 1);
+					return true;
+				}
+
+		auto bringUpTargetSlot = [&](size_t _targetOffset, auto _recurse) -> void {
+			// If we need another copy of the slot at this position anyways, we can duplicate or generate it.
+			if (ops.targetMultiplicity(_targetOffset) > 0)
+				ops.pushOrDupTarget(_targetOffset);
+			else
 			{
-				_push(slot);
-				_currentStack.emplace_back(slot);
-				createStackLayout(_currentStack, _targetStack, _swap, _dup, _push, _pop);
-				return;
+				// The desired target slot must already be somewhere else on stack right now.
+				for (auto offset: ranges::views::iota(0u, std::min(ops.sourceSize(), ops.targetSize())))
+					if (
+						!ops.isCompatible(offset, offset) &&
+						ops.isCompatible(offset, _targetOffset)
+						)
+					{
+						_recurse(offset, _recurse);
+						return;
+					}
+				yulAssert(false, "");
 			}
+		};
+
+		// If a lower slot should be removed, try to bring up the slot that should end up there and bring it up.
+		// Note that after the cases above, there will always be a target slot to duplicate in this case.
+		for (size_t offset: ranges::views::iota(0u, ops.sourceSize()))
+			if (
+				!ops.isCompatible(offset, offset) && // The lower slot is not already in position.
+				ops.sourceMultiplicity(offset) < 0 && // We have too many copies of this slot.
+				offset <= ops.targetSize() && // There is a target slot at this position.
+				!ops.targetIsArbitrary(offset) // And that target slot is not arbitrary.
+			)
+			{
+				bringUpTargetSlot(offset, bringUpTargetSlot);
+				return true;
+			}
+
+		// At this point we want to keep all slots.
+		for (size_t i = 0; i < ops.sourceSize(); ++i)
+			yulAssert(ops.sourceMultiplicity(i) >= 0, "");
+		yulAssert(ops.sourceSize() <= ops.targetSize(), "");
+
+		// If the top is not in position, try to find a slot that wants to be at the top and swap it up.
+		if (!ops.isCompatible(sourceTop, sourceTop))
+			for (size_t sourceOffset: ranges::views::iota(0u, ops.sourceSize()))
+				if (
+					!ops.isCompatible(sourceOffset, sourceOffset) &&
+					ops.isCompatible(sourceOffset, sourceTop)
+				)
+				{
+					ops.swap(ops.sourceSize() - sourceOffset - 1);
+					return true;
+				}
+
+		// If we still need more slots, produce a suitable one.
+		if (ops.sourceSize() < ops.targetSize())
+		{
+			bringUpTargetSlot(ops.sourceSize(), bringUpTargetSlot);
+			return true;
 		}
+
+		// The stack has the correct size, each slot has the correct number of copies and the top is in position.
+		yulAssert(ops.sourceSize() == ops.targetSize(), "");
+		size_t size = ops.sourceSize();
+		for (size_t i = 0; i < ops.sourceSize(); ++i)
+			yulAssert(ops.sourceMultiplicity(i) == 0 && ops.targetMultiplicity(i) == 0, "");
+		yulAssert(ops.isCompatible(sourceTop, sourceTop), "");
+
+		// If we find a lower slot that is out of position, but also compatible with the top, swap that up.
+		for (size_t offset: ranges::views::iota(0u, size))
+			if (!ops.isCompatible(offset, offset) && ops.isCompatible(sourceTop, offset))
+			{
+				ops.swap(size - offset - 1);
+				return true;
+			}
+		// Swap up any slot that is still out of position.
+		for (size_t offset: ranges::views::iota(0u, size))
+			if (!ops.isCompatible(offset, offset) && !ops.sourceIsSame(offset, sourceTop))
+			{
+				ops.swap(size - offset - 1);
+				return true;
+			}
 		yulAssert(false, "");
 	}
+};
 
-	yulAssert(_currentStack == _targetStack, "");
+template<typename Swap, typename PushOrDup, typename Pop>
+void createStackLayout(Stack& _currentStack, Stack const& _targetStack, Swap _swap, PushOrDup _pushOrDup, Pop _pop)
+{
+	struct ShuffleOperations
+	{
+		Stack& currentStack;
+		Stack const& targetStack;
+		Swap swapCallback;
+		PushOrDup pushOrDupCallback;
+		Pop popCallback;
+		std::map<StackSlot, int> multiplicity;
+		ShuffleOperations(
+			Stack& _currentStack,
+			Stack const& _targetStack,
+			Swap _swap,
+			PushOrDup _pushOrDup,
+			Pop _pop
+		):
+			currentStack(_currentStack),
+			targetStack(_targetStack),
+			swapCallback(_swap),
+			pushOrDupCallback(_pushOrDup),
+			popCallback(_pop)
+		{
+			for (auto const& slot: currentStack)
+				--multiplicity[slot];
+			for (auto&& [offset, slot]: targetStack | ranges::views::enumerate)
+				if (std::holds_alternative<JunkSlot>(slot) && offset < currentStack.size())
+					++multiplicity[currentStack.at(offset)];
+				else
+					++multiplicity[slot];
+		}
+		bool isCompatible(size_t _source, size_t _target)
+		{
+			return
+				_source < currentStack.size() &&
+				_target < targetStack.size() &&
+				(
+					std::holds_alternative<JunkSlot>(targetStack.at(_target)) ||
+					currentStack.at(_source) == targetStack.at(_target)
+				);
+		}
+		bool sourceIsSame(size_t _lhs, size_t _rhs) { return currentStack.at(_lhs) == currentStack.at(_rhs); }
+		int sourceMultiplicity(size_t _offset) { return multiplicity.at(currentStack.at(_offset)); }
+		int targetMultiplicity(size_t _offset) { return multiplicity.at(targetStack.at(_offset)); }
+		bool targetIsArbitrary(size_t offset)
+		{
+			return offset < targetStack.size() && std::holds_alternative<JunkSlot>(targetStack.at(offset));
+		}
+		void swap(size_t _i)
+		{
+			swapCallback(static_cast<unsigned>(_i));
+			std::swap(currentStack.at(currentStack.size() -  _i - 1), currentStack.back());
+		}
+		size_t sourceSize() { return currentStack.size(); }
+		size_t targetSize() { return targetStack.size(); }
+		void pop()
+		{
+			popCallback();
+			currentStack.pop_back();
+		}
+		void pushOrDupTarget(size_t _offset)
+		{
+			auto const& targetSlot = targetStack.at(_offset);
+			pushOrDupCallback(targetSlot);
+			currentStack.push_back(targetSlot);
+		}
+	};
+
+	Shuffler<ShuffleOperations>::shuffle(_currentStack, _targetStack, _swap, _pushOrDup, _pop);
+
+	while (_currentStack.size() < _targetStack.size())
+	{
+		_pushOrDup(_targetStack.at(_currentStack.size()));
+		_currentStack.push_back(_targetStack.at(_currentStack.size()));
+	}
+
+	yulAssert(_currentStack.size() == _targetStack.size(), "");
+	for (auto&& [current, target]: ranges::zip_view(_currentStack, _targetStack))
+		if (std::holds_alternative<JunkSlot>(target))
+			current = JunkSlot{};
+		else
+			yulAssert(current == target, "");
 }
 
 }

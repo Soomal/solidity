@@ -24,7 +24,6 @@ set(sources
 	Keccak256.h
 	LazyInit.h
 	LEB128.h
-	Permutations.h
 	picosha2.h
 	Result.h
 	SetOnce.h
