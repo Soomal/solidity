@@ -164,13 +164,20 @@ BOOST_AUTO_TEST_CASE(to_string)
 
 BOOST_AUTO_TEST_CASE(use_src_empty)
 {
-	auto const mapping = ObjectParser::tryGetSourceLocationMapping("");
+	ErrorList errors;
+	SourceLocation location;
+	ErrorReporter reporter(errors);
+	auto const mapping = ObjectParser::tryGetSourceLocationMapping("", location, reporter);
 	BOOST_REQUIRE(!mapping);
 }
 
 BOOST_AUTO_TEST_CASE(use_src_simple)
 {
-	auto const mapping = ObjectParser::tryGetSourceLocationMapping(R"(@use-src 0:"contract.sol")");
+	ErrorList errors;
+	SourceLocation location;
+	ErrorReporter reporter(errors);
+	string const text = R"(@use-src 0:"contract.sol")";
+	auto const mapping = ObjectParser::tryGetSourceLocationMapping(text, location, reporter);
 	BOOST_REQUIRE(mapping);
 	BOOST_REQUIRE_EQUAL(mapping->size(), 1);
 	BOOST_REQUIRE_EQUAL(mapping->at(0), "contract.sol");
@@ -178,8 +185,13 @@ BOOST_AUTO_TEST_CASE(use_src_simple)
 
 BOOST_AUTO_TEST_CASE(use_src_multiple)
 {
+	ErrorList errors;
+	SourceLocation location;
+	ErrorReporter reporter(errors);
 	auto const mapping = ObjectParser::tryGetSourceLocationMapping(
-		R"(@use-src 0:"contract.sol", 1:"misc.yul")"
+		R"(@use-src 0:"contract.sol", 1:"misc.yul")",
+		location,
+		reporter
 	);
 	BOOST_REQUIRE(mapping);
 	BOOST_REQUIRE_EQUAL(mapping->size(), 2);
@@ -189,8 +201,13 @@ BOOST_AUTO_TEST_CASE(use_src_multiple)
 
 BOOST_AUTO_TEST_CASE(use_src_escaped_filenames)
 {
+	ErrorList errors;
+	SourceLocation location;
+	ErrorReporter reporter(errors);
 	auto const mapping = ObjectParser::tryGetSourceLocationMapping(
-		R"(@use-src 42:"con\"tract@\".sol")"
+		R"(@use-src 42:"con\"tract@\".sol")",
+		location,
+		reporter
 	);
 	BOOST_REQUIRE(mapping);
 	BOOST_REQUIRE_EQUAL(mapping->size(), 1);
@@ -201,9 +218,14 @@ BOOST_AUTO_TEST_CASE(use_src_escaped_filenames)
 // TODO: test invalid syntax
 BOOST_AUTO_TEST_CASE(use_src_invalid_syntax_open_quote)
 {
+	ErrorList errors;
+	SourceLocation location;
+	ErrorReporter reporter(errors);
 	// open quote arg
 	auto const mapping = ObjectParser::tryGetSourceLocationMapping(
-		R"(@use-src 42:"con)"
+		R"(@use-src 42:"con)",
+		location,
+		reporter
 	);
 	// invalid source index: R"(@use-src -1:"foo.sol")"
 	// no colon:             R"(@use-src -1_"foo.sol")"

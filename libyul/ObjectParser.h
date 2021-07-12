@@ -57,7 +57,11 @@ public:
 
 	using ReverseSourceNameMap = std::map<unsigned, std::string>;
 	using CharStreamMap = std::map<unsigned, std::shared_ptr<langutil::CharStream>>;
-	static std::optional<ReverseSourceNameMap> tryGetSourceLocationMapping(std::string const& _text);
+	static std::optional<ReverseSourceNameMap> tryGetSourceLocationMapping(
+		std::string const& _text,
+		langutil::SourceLocation const& _location,
+		langutil::ErrorReporter& _errorReporter
+	);
 	std::optional<ReverseSourceNameMap> tryGetSourceLocationMapping() const;
 	std::optional<CharStreamMap> convertToCharStreamMap(ReverseSourceNameMap const& _reverseSourceNames) const;
 

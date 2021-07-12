@@ -110,12 +110,20 @@ shared_ptr<Block> ObjectParser::parseCode()
 
 optional<ObjectParser::ReverseSourceNameMap> ObjectParser::tryGetSourceLocationMapping() const
 {
-	return tryGetSourceLocationMapping(m_scanner->currentCommentLiteral());
+	return tryGetSourceLocationMapping(
+		m_scanner->currentCommentLiteral(),
+		m_scanner->currentCommentLocation(),
+		m_errorReporter
+	);
 }
 
-optional<ObjectParser::ReverseSourceNameMap> ObjectParser::tryGetSourceLocationMapping(std::string const& _text)
+optional<ObjectParser::ReverseSourceNameMap> ObjectParser::tryGetSourceLocationMapping(
+	std::string const& _text,
+	SourceLocation const& _location,
+	ErrorReporter& _errorReporter
+)
 {
-	// @use-src 0:"abc.sol" , "1:foo.sol" ,2:"bar.sol"
+	// @use-src 0:"abc.sol" , 1":foo.sol" ,2:"bar.sol"
 	//
 	// UseSrcList := UseSrc (',' UseSrc)*
 	// UseSrc     := [0-9]+ ':' FileName
@@ -155,13 +163,17 @@ optional<ObjectParser::ReverseSourceNameMap> ObjectParser::tryGetSourceLocationM
 
 		auto const len = cm[0].length();
 		solAssert(len > 0, "");
-		text.remove_prefix(static_cast<size_t>(len));
+		if (k > 16)
+		{
+			_errorReporter.syntaxError(000_error, _location, "Excessive use of @use-src.");
+			return nullopt;
+		}
 		solAssert(k <= 16, ""); // A sanity-check to avoid abuse. Should never happen.
 
 		auto const sourceIndex = toUnsignedInt(cm[1].str());
 		if (!sourceIndex)
 		{
-			// TODO: report error
+			_errorReporter.syntaxError(0000_error, _location, "Invalid parameters for @use-src."); // TODO: error code
 			return nullopt;
 		}
 
