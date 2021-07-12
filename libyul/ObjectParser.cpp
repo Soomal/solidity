@@ -134,14 +134,13 @@ optional<ObjectParser::ReverseSourceNameMap> ObjectParser::tryGetSourceLocationM
 		R"~~~((^|\s+)@use-src\s+(.*)$)~~~",
 		std::regex_constants::ECMAScript | std::regex_constants::optimize
 	);
-	string_view text(_text);
-	std::cmatch cm;
-	if (!std::regex_search(text.data(), text.data() + text.size(), cm, lineRE))
+	std::smatch sm;
+	if (!std::regex_search(_text, sm, lineRE))
 		return nullopt;
-	solAssert(cm.size() == 3, "");
+	solAssert(sm.size() == 3, "");
 
 	// Let @c text point to the parameter value (last match).
-	text = string_view(cm[2].first, static_cast<size_t>(std::distance(cm[2].first, cm[2].second)));
+	auto text = sm[2].str();
 
 	// iteratively match for NUM : STRING_LITERAL and increment
 	static regex const firstParamRE(R"~~~(\s*(\d+)\s*:\s*"((?:\\\"|[^\"])*)")~~~",
@@ -156,12 +155,12 @@ optional<ObjectParser::ReverseSourceNameMap> ObjectParser::tryGetSourceLocationM
 	int k = 0;
 	while (!text.empty())
 	{
-		if (!std::regex_search(text.data(), text.data() + _text.size(), cm, k ? continuationParamRE : firstParamRE))
+		if (!std::regex_search(text, sm, k ? continuationParamRE : firstParamRE))
 			return nullopt;
 		++k;
-		solAssert(cm.size() == 3, "");
+		solAssert(sm.size() == 3, "");
 
-		auto const len = cm[0].length();
+		auto const len = sm[0].length();
 		solAssert(len > 0, "");
 		if (k > 16)
 		{
@@ -170,15 +169,16 @@ optional<ObjectParser::ReverseSourceNameMap> ObjectParser::tryGetSourceLocationM
 		}
 		solAssert(k <= 16, ""); // A sanity-check to avoid abuse. Should never happen.
 
-		auto const sourceIndex = toUnsignedInt(cm[1].str());
+		auto const sourceIndex = toUnsignedInt(sm[1].str());
 		if (!sourceIndex)
 		{
 			_errorReporter.syntaxError(0000_error, _location, "Invalid parameters for @use-src."); // TODO: error code
 			return nullopt;
 		}
 
-		auto fileName = cm[2].str();
+		auto fileName = sm[2].str();
 		result[*sourceIndex] = fileName;
+		text = text.substr(static_cast<size_t>(len));
 	}
 
 	return result;
