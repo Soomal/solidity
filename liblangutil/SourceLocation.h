@@ -26,8 +26,6 @@
 #include <libsolutil/Assertions.h>
 #include <libsolutil/Exceptions.h>
 
-#include <liblangutil/CharStream.h>
-
 #include <limits>
 #include <memory>
 #include <string>

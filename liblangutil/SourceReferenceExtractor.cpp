@@ -16,7 +16,6 @@
 */
 // SPDX-License-Identifier: GPL-3.0
 #include <liblangutil/SourceReferenceExtractor.h>
-#include <liblangutil/CharStream.h>
 #include <liblangutil/Exceptions.h>
 #include <liblangutil/ScannerBySourceName.h>
 #include <liblangutil/Scanner.h>
