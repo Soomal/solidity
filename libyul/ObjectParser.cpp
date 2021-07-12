@@ -162,17 +162,16 @@ optional<ObjectParser::ReverseSourceNameMap> ObjectParser::tryGetSourceLocationM
 
 		auto const len = sm[0].length();
 		solAssert(len > 0, "");
-		if (k > 16)
+		if (k > 256)
 		{
-			_errorReporter.syntaxError(000_error, _location, "Excessive use of @use-src.");
+			_errorReporter.syntaxError(6588_error, _location, "Excessive use of @use-src.");
 			return nullopt;
 		}
-		solAssert(k <= 16, ""); // A sanity-check to avoid abuse. Should never happen.
 
 		auto const sourceIndex = toUnsignedInt(sm[1].str());
 		if (!sourceIndex)
 		{
-			_errorReporter.syntaxError(0000_error, _location, "Invalid parameters for @use-src."); // TODO: error code
+			_errorReporter.syntaxError(1619_error, _location, "Invalid parameters for @use-src."); // TODO: error code
 			return nullopt;
 		}
 
