@@ -65,6 +65,9 @@ public:
 	std::optional<ReverseSourceNameMap> tryGetSourceLocationMapping() const;
 	std::optional<CharStreamMap> convertToCharStreamMap(ReverseSourceNameMap const& _reverseSourceNames) const;
 
+	/// Determines how many source files at most can be given to @use-src.
+	static constexpr size_t MaxSourceFiles = 256;
+
 private:
 	std::shared_ptr<Object> parseObject(Object* _containingObject = nullptr);
 	std::shared_ptr<Block> parseCode();

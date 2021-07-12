@@ -123,7 +123,7 @@ optional<ObjectParser::ReverseSourceNameMap> ObjectParser::tryGetSourceLocationM
 	ErrorReporter& _errorReporter
 )
 {
-	// @use-src 0:"abc.sol" , 1":foo.sol" ,2:"bar.sol"
+	// @use-src 0:"abc.sol", 1:"foo.sol", 2:"bar.sol"
 	//
 	// UseSrcList := UseSrc (',' UseSrc)*
 	// UseSrc     := [0-9]+ ':' FileName
@@ -152,17 +152,18 @@ optional<ObjectParser::ReverseSourceNameMap> ObjectParser::tryGetSourceLocationM
 
 	ReverseSourceNameMap result;
 
-	int k = 0;
 	while (!text.empty())
 	{
-		if (!std::regex_search(text, sm, k ? continuationParamRE : firstParamRE))
+		if (!std::regex_search(text, sm, !result.empty() ? continuationParamRE : firstParamRE))
+		{
+			_errorReporter.syntaxError(9804_error, _location, "Could not fully parse @use-src arguments.");
 			return nullopt;
-		++k;
+		}
 		solAssert(sm.size() == 3, "");
 
 		auto const len = sm[0].length();
 		solAssert(len > 0, "");
-		if (k > 256)
+		if (result.size() >= MaxSourceFiles)
 		{
 			_errorReporter.syntaxError(6588_error, _location, "Excessive use of @use-src.");
 			return nullopt;

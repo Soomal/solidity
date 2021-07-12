@@ -30,10 +30,14 @@
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/test/unit_test.hpp>
 
+#include <range/v3/view/iota.hpp>
+
 #include <memory>
 #include <optional>
 #include <string>
+#include <sstream>
 
+using namespace ranges;
 using namespace std;
 using namespace solidity::frontend;
 using namespace solidity::langutil;
@@ -215,21 +219,77 @@ BOOST_AUTO_TEST_CASE(use_src_escaped_filenames)
 	BOOST_REQUIRE_EQUAL(mapping->at(42), "con\\\"tract@\\\".sol");
 }
 
-// TODO: test invalid syntax
-BOOST_AUTO_TEST_CASE(use_src_invalid_syntax_open_quote)
+BOOST_AUTO_TEST_CASE(use_src_invalid_syntax_malformed_param_1)
 {
 	ErrorList errors;
 	SourceLocation location;
 	ErrorReporter reporter(errors);
-	// open quote arg
+
+	// open quote arg, missing closing quote
+	auto const mapping = ObjectParser::tryGetSourceLocationMapping(
+		R"(@use-src 42_"con")",
+		location,
+		reporter
+	);
+
+	BOOST_REQUIRE(reporter.hasErrors());
+	BOOST_CHECK_EQUAL(errors.size(), 1);
+	BOOST_CHECK_EQUAL(errors.front()->errorId().error, 9804);
+}
+
+BOOST_AUTO_TEST_CASE(use_src_invalid_syntax_malformed_param_2)
+{
+	ErrorList errors;
+	SourceLocation location;
+	ErrorReporter reporter(errors);
+
+	// open quote arg, missing closing quote
 	auto const mapping = ObjectParser::tryGetSourceLocationMapping(
 		R"(@use-src 42:"con)",
 		location,
 		reporter
 	);
-	// invalid source index: R"(@use-src -1:"foo.sol")"
-	// no colon:             R"(@use-src -1_"foo.sol")"
-	//
+
+	BOOST_REQUIRE(reporter.hasErrors());
+	BOOST_CHECK_EQUAL(errors.size(), 1);
+	BOOST_CHECK_EQUAL(errors.front()->errorId().error, 9804);
+}
+
+BOOST_AUTO_TEST_CASE(use_src_invalid_syntax_invalid_index)
+{
+	ErrorList errors;
+	SourceLocation location;
+	ErrorReporter reporter(errors);
+
+	// too large valid number (it's uint64 max plus one)
+	auto const mapping = ObjectParser::tryGetSourceLocationMapping(
+		R"(@use-src 18446744073709551616:"file.sol")",
+		location,
+		reporter
+	);
+
+	BOOST_REQUIRE(reporter.hasErrors());
+	BOOST_CHECK_EQUAL(errors.size(), 1);
+	BOOST_CHECK_EQUAL(errors.front()->errorId().error, 1619);
+}
+
+BOOST_AUTO_TEST_CASE(use_src_invalid_syntax_param_excess)
+{
+	ErrorList errors;
+	SourceLocation location;
+	ErrorReporter reporter(errors);
+
+	std::stringstream sstr;
+	sstr << "@use-src 0:\"source0.sol\"";
+	for (auto const i: views::iota(1u, ObjectParser::MaxSourceFiles + 1))
+		sstr << ", " << i << ":\"source" << i << ".sol\"";
+	auto const text = sstr.str();
+
+	auto const mapping = ObjectParser::tryGetSourceLocationMapping(text, location, reporter);
+
+	BOOST_REQUIRE(reporter.hasErrors());
+	BOOST_CHECK_EQUAL(errors.size(), 1);
+	BOOST_CHECK_EQUAL(errors.front()->errorId().error, 6588);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
