@@ -45,7 +45,7 @@ optional<CompilerOutput> SolidityCompilationFramework::compileContract()
 			for (auto const& error: m_compiler.errors())
 				cerr << SourceReferenceFormatter::formatErrorInformation(
 					error,
-					m_compier;
+					m_compiler
 				);
 		}
 		return {};
